@@ -1,265 +1,394 @@
-// Bring modules into scope.
-use crate::parsers;
-use colored::Colorize;
-use crossbeam::channel::{self, unbounded};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::thread::{self, JoinHandle};
-use std::fs;
 
-// Define 2 types.
+use colored::Colorize;
+use crossbeam::channel::{self, unbounded};
+
+use crate::interact;
+use crate::lexer;
+use crate::parsers;
+
+pub static DEFAULT_IGNORE_LIST: [&str; 122] = [
+    ".env",
+    ".env.*",
+    "*.env",
+    "*.env.*",
+    "secrets",
+    "secret",
+    "credentials",
+    "credential",
+    "certs",
+    "cert",
+    "ssl",
+    "tls",
+    "tokens",
+    "token",
+    "keys",
+    "key",
+    "id_rsa",
+    "id_ed25519",
+    "known_hosts",
+    "kubeconfig",
+    "*.kubeconfig",
+    ".kube",
+    "*.pem",
+    "*.key",
+    "*.crt",
+    "*.cer",
+    "*.p12",
+    "*.pfx",
+    "*.jks",
+    ".git",
+    ".hg",
+    ".svn",
+    "node_modules",
+    ".bun",
+    ".pnpm-store",
+    ".yarn",
+    "vendor",
+    "venv",
+    ".venv",
+    "env",
+    ".env",
+    "envs",
+    "virtualenvs",
+    "venvs",
+    "__pycache__",
+    "target",
+    ".gradle",
+    ".m2",
+    "dist",
+    "build",
+    "out",
+    ".next",
+    ".nuxt",
+    ".svelte-kit",
+    ".turbo",
+    ".cache",
+    "coverage",
+    "storybook-static",
+    "public/build",
+    "logs",
+    "log",
+    "tmp",
+    "temp",
+    "*.tmp",
+    "*.temp",
+    "*.log",
+    "*.pid",
+    "dump.rdb",
+    "*.rdb",
+    "*.aof",
+    "data",
+    "storage",
+    "uploads",
+    "upload",
+    "media",
+    "private",
+    "backups",
+    "backup",
+    "snapshots",
+    "snapshot",
+    "*.dump",
+    "*.sql",
+    "*.sqlite",
+    "*.sqlite3",
+    "*.db",
+    "*.db-shm",
+    "*.db-wal",
+    "*.png",
+    "*.jpg",
+    "*.jpeg",
+    "*.gif",
+    "*.webp",
+    "*.ico",
+    "*.svg",
+    "*.mp4",
+    "*.mov",
+    "*.avi",
+    "*.mkv",
+    "*.mp3",
+    "*.wav",
+    "*.ogg",
+    "*.zip",
+    "*.tar",
+    "*.gz",
+    "*.tgz",
+    "*.7z",
+    "*.rar",
+    "*.exe",
+    "*.dll",
+    "*.so",
+    "*.dylib",
+    "*.bin",
+    ".idea",
+    ".vscode",
+    ".DS_Store",
+    "Thumbs.db",
+    "*.swp",
+    "*.swo",
+    ".commandkit",
+    ".old",
+    ".agents",
+    ".ignored",
+];
+
 type TermFreq = HashMap<String, usize>;
 type TermFreqIndex = HashMap<PathBuf, TermFreq>;
 
-// Bring native crates.
-use crate::lexer;
-use crate::interact; 
+fn should_ignore_path(path: &Path, ignore_list: &HashSet<String>) -> bool {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    let normalized_path = path.to_string_lossy().replace('\\', "/");
 
-pub fn traverse_dirs<P: AsRef<Path>>(dir_path: P, sender: channel::Sender<String>) {
+    ignore_list.iter().any(|pattern| {
+        let pattern = pattern.trim();
+        if pattern.is_empty() {
+            return false;
+        }
+
+        let stripped_pattern = pattern.strip_suffix('/').unwrap_or(pattern);
+
+        stripped_pattern == file_name
+            || stripped_pattern == normalized_path
+            || simple_glob_match(stripped_pattern, file_name)
+            || simple_glob_match(stripped_pattern, &normalized_path)
+    })
+}
+
+fn simple_glob_match(pattern: &str, value: &str) -> bool {
+    if !pattern.contains('*') {
+        return false;
+    }
+
+    if pattern == "*" {
+        return true;
+    }
+
+    let anchored_start = !pattern.starts_with('*');
+    let anchored_end = !pattern.ends_with('*');
+    let parts: Vec<&str> = pattern.split('*').filter(|part| !part.is_empty()).collect();
+
+    if parts.is_empty() {
+        return true;
+    }
+
+    let mut remaining = value;
+    if anchored_start {
+        let first = parts[0];
+        if !remaining.starts_with(first) {
+            return false;
+        }
+        remaining = &remaining[first.len()..];
+    }
+
+    let start_index = usize::from(anchored_start);
+    for part in &parts[start_index..] {
+        match remaining.find(part) {
+            Some(index) => remaining = &remaining[index + part.len()..],
+            None => return false,
+        }
+    }
+
+    if anchored_end {
+        if let Some(last) = parts.last() {
+            return value.ends_with(last);
+        }
+    }
+
+    true
+}
+
+pub fn traverse_dirs<P: AsRef<Path>>(
+    dir_path: P,
+    sender: &channel::Sender<String>,
+    ignored_sender: &channel::Sender<String>,
+    ignore_list: &HashSet<String>,
+) {
     if let Ok(entries) = fs::read_dir(dir_path) {
         for entry in entries.flatten() {
             let path = entry.path();
-            // Handler directory recursion.
+
+            if should_ignore_path(&path, ignore_list) {
+                let _ = ignored_sender.send(path.to_string_lossy().to_string());
+                continue;
+            }
+
             if path.is_dir() {
-                // Pass a clone of the sender because it's mpsc;
-                traverse_dirs(path, sender.clone());
-            } else {
-                if path.is_file() {
-                    // Send the path;
-                    sender.send(path.to_string_lossy().to_string()).unwrap();
-                }
+                traverse_dirs(path, sender, ignored_sender, ignore_list);
+            } else if path.is_file() {
+                let _ = sender.send(path.to_string_lossy().to_string());
             }
         }
     }
 }
 
-pub fn process_file(path: String, max_file_size: u64) {
-    // Create sender and reciever channels for directory traversal.
-    let (file_sender, file_reciever) = unbounded::<String>();
+pub fn process_file(path: String, max_file_size: u64, ignore_list: HashSet<String>, ai_mode: bool) {
+    let (file_sender, file_receiver) = unbounded::<String>();
+    let (ignored_sender, ignored_receiver) = unbounded::<String>();
+    let (processing_sender, processing_receiver) = unbounded::<(String, Vec<char>)>();
 
-    // Create sender and reciever channels for file processing threads.
-    let (processing_sender, processing_reciever) = unbounded::<(String, Vec<char>)>();
-
-    // Directory traversal should happen on its onw thread.
-    let file_sender_clone = file_sender.clone(); // clone the file_sender outside of the closure so we don't move it. 
+    let file_sender_clone = file_sender.clone();
+    let ignored_sender_clone = ignored_sender.clone();
     let dir_traversal_handle: JoinHandle<()> = thread::spawn(move || {
-        traverse_dirs(path.to_owned(), file_sender_clone);
+        traverse_dirs(
+            path,
+            &file_sender_clone,
+            &ignored_sender_clone,
+            &ignore_list,
+        );
     });
 
-    // TermFrequency Calculation Should happen on its own thread. It returns the term frequency index table.
-    let processing_reciever_clone = processing_reciever.clone();
     let term_frequency_calc_handle =
-        thread::spawn(|| calculate_term_frequency(processing_reciever_clone));
-   
+        thread::spawn(move || calculate_term_frequency(&processing_receiver));
 
-    // Create a pool of worker threads.
-    let mut handles: Vec<JoinHandle<()>> = vec![];
+    let num_threads = std::thread::available_parallelism()
+        .map(std::num::NonZero::get)
+        .unwrap_or(2);
+    let mut handles: Vec<JoinHandle<()>> = Vec::with_capacity(num_threads);
 
-    let num_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2);
     for _ in 0..num_threads {
-        // CLone file reciever.
-        let file_reciever = file_reciever.clone();
-        // Clone file processing sender.
+        let file_receiver = file_receiver.clone();
         let processing_sender = processing_sender.clone();
-        // Spawn a thread.
+
         let handle = thread::spawn(move || {
-            while let Ok(file_path) = file_reciever.recv() {
-                // Print this message to inform the user of a skipped large file.
+            while let Ok(file_path) = file_receiver.recv() {
                 if let Ok(metadata) = fs::metadata(&file_path) {
                     let file_size = metadata.len();
                     if file_size > max_file_size {
-                        println!(
-                            "{} {:?} ({:.2}MB)",
-                            "Skipping large file:".yellow(),
-                            file_path,
-                            file_size as f64 / (1024.0 * 1024.0)
-                        );
+                        if !ai_mode {
+                            let megabyte = 1024 * 1024;
+                            let whole_mb = file_size / megabyte;
+                            let fraction_mb = (file_size % megabyte) * 100 / megabyte;
+                            println!(
+                                "{} {:?} ({}.{:02}MB)",
+                                "Skipping large file:".yellow(),
+                                file_path,
+                                whole_mb,
+                                fraction_mb
+                            );
+                        }
                         continue;
                     }
                 }
 
-                // Process files based on extensions.
-                match Path::new(&file_path).extension() {
-                    Some(ext) => match ext.to_string_lossy().to_lowercase().as_str() {
-                        "pdf" => match parsers::read_entire_pdf_file(&file_path) {
-                            Ok(text) => {
-                                // send the processed text and file_path
-                                let content = text.chars().collect::<Vec<_>>();
-                                let _ =
-                                    processing_sender.send((file_path, content)).map_err(|err| {
-                                        eprintln!(
-                                            "{} : {}",
-                                            "Error sending file content to recieving channel:"
-                                                .red(),
-                                            err
-                                        );
-                                    });
-                            }
-                            Err(e) => {
-                                eprintln!(
-                                    "{} {:?}: {}",
-                                    "Error processing PDF file:".red(),
-                                    file_path,
-                                    e
-                                );
-                                continue;
-                            }
-                        },
-                        "txt" => match parsers::read_entire_txt_file(&file_path) {
-                            Ok(text) => {
-                                // send the processed text and file_path
-                                let content = text.chars().collect::<Vec<_>>();
-                                let _ =
-                                    processing_sender.send((file_path, content)).map_err(|err| {
-                                        eprintln!(
-                                            "{} : {}",
-                                            "Error sending file content to recieving channel:"
-                                                .red(),
-                                            err
-                                        );
-                                    });
-                            }
-                            Err(e) => {
-                                eprintln!(
-                                    "{} {:?}: {}",
-                                    "Error processing text file:".red(),
-                                    file_path,
-                                    e
-                                );
-                                continue;
-                            }
-                        },
-                        "xml" | "xhtml" => match parsers::read_entire_xml_file(&file_path) {
-                            Ok(text) => {
-                                // send the processed text and file_path
-                                let content = text.chars().collect::<Vec<_>>();
-                                let _ =
-                                    processing_sender.send((file_path, content)).map_err(|err| {
-                                        eprintln!(
-                                            "{} : {}",
-                                            "Error sending file content to recieving channel:"
-                                                .red(),
-                                            err
-                                        );
-                                    });
-                            }
-                            Err(e) => {
-                                eprintln!(
-                                    "{} {:?}: {}",
-                                    "Error processing XML file:".red(),
-                                    file_path,
-                                    e
-                                );
-                                continue;
-                            }
-                        },
-                        "html" | "htm" => match parsers::read_entire_html_file(&file_path) {
-                            Ok(text) => {
-                                // send the processed text and file_path
-                                let content = text.chars().collect::<Vec<_>>();
-                                let _ =
-                                    processing_sender.send((file_path, content)).map_err(|err| {
-                                        eprintln!(
-                                            "{} : {}",
-                                            "Error sending file content to recieving channel:"
-                                                .red(),
-                                            err
-                                        );
-                                    });
-                            }
-                            Err(e) => {
-                                eprintln!(
-                                    "{} {:?}: {}",
-                                    "Error processing HTML file:".red(),
-                                    file_path,
-                                    e
-                                );
-                                continue;
-                            }
-                        },
-                        "rs" | "py" | "js" | "ts" | "java" | "cpp" | "c" | "h" | "go" | "php" | "rb" | "swift" | "kt" => {
-                            match parsers::read_code_file(&file_path) {
-                                Ok(text) => {
-                                    let content = text.chars().collect::<Vec<_>>();
-                                    let _ = processing_sender.send((file_path, content)).map_err(|err| {
-                                        eprintln!(
-                                            "{} : {}",
-                                            "Error sending code file content to receiving channel:".red(),
-                                            err
-                                        );
-                                    });
-                                }
-                                Err(e) => {
-                                    eprintln!(
-                                        "{} {:?}: {}",
-                                        "Error processing code file:".red(),
-                                        file_path,
-                                        e
-                                    );
-                                    continue;
-                                }
-                            }
-                        },                        
-                        _ => {
-                            eprintln!(
-                                "{}: do not know how to process this file, couldn't discern the extension: {file_path:?}
-                                Skipping file...",
-                                "Error".red()
-                            );
-                        }
-                    },
-                    None => {
+                if let Some(content) = read_supported_file(&file_path) {
+                    if let Err(err) = processing_sender.send((file_path, content)) {
                         eprintln!(
-                            "{}: do not know how to process this file, couldn't discern the extension: {file_path:?}
-                             Skipping file...",
-                            "Error".red()
+                            "{} {}",
+                            "Error sending file content to receiving channel:".red(),
+                            err
                         );
-                        continue;
                     }
                 }
             }
         });
 
-        // Add each handle to the array.
         handles.push(handle);
     }
 
-    // After directory traversal completes
     let _ = dir_traversal_handle.join();
-
-    // Drop the original sender to signal no more files will be sent
     drop(file_sender);
+    drop(ignored_sender);
 
-    // Wait for all worker threads to complete
     for handle in handles {
         let _ = handle.join();
     }
 
-    // Now drop the processing sender to signal no more files to process
     drop(processing_sender);
+    let ignored_paths = collect_ignored_paths(&ignored_receiver);
 
-    // Now...
     if let Ok(term_freq_index) = term_frequency_calc_handle.join() {
-        // Save the complete index only once after all processing is done
-        let index_path: PathBuf = interact::get_indeces_path();
-        if let Some(parent) = Path::new(&index_path).parent() {
-            let _ = fs::create_dir_all(parent).map_err(|err|{
-                eprintln!(
-                    "{} {err}",
-                    "Error creating parent directory for index Path:".red(),   
-                )
-            });
+        save_index(&term_freq_index, &ignored_paths, ai_mode);
+    }
+}
+
+fn collect_ignored_paths(ignored_receiver: &channel::Receiver<String>) -> Vec<String> {
+    ignored_receiver
+        .try_iter()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn read_supported_file(file_path: &str) -> Option<Vec<char>> {
+    let extension = Path::new(file_path)
+        .extension()
+        .map(|ext| ext.to_string_lossy().to_lowercase())?;
+
+    let result = match extension.as_str() {
+        "pdf" => parsers::read_entire_pdf_file(file_path),
+        "txt" => parsers::read_entire_txt_file(file_path),
+        "xml" | "xhtml" => parsers::read_entire_xml_file(file_path),
+        "html" | "htm" => parsers::read_entire_html_file(file_path).map_err(Into::into),
+        "rs" | "py" | "js" | "ts" | "java" | "cpp" | "c" | "h" | "go" | "php" | "rb" | "swift"
+        | "kt" => parsers::read_code_file(file_path).map_err(Into::into),
+        _ => return None,
+    };
+
+    match result {
+        Ok(text) => Some(text.chars().collect()),
+        Err(err) => {
+            eprintln!(
+                "{} {:?}: {}",
+                "Error processing file:".red(),
+                file_path,
+                err
+            );
+            None
         }
+    }
+}
+
+fn save_index(term_freq_index: &TermFreqIndex, ignored_paths: &[String], ai_mode: bool) {
+    let index_path = interact::get_indeces_path();
+    if let Some(parent) = index_path.parent() {
+        if let Err(err) = fs::create_dir_all(parent) {
+            eprintln!(
+                "{} {}",
+                "Error creating parent directory for index path:".red(),
+                err
+            );
+            return;
+        }
+    }
+
+    if ai_mode {
+        println!("index:{}", index_path.display());
+    } else {
         println!(
             "{} {}",
             "Saving index to:".green(),
-            index_path.to_str().expect("Invalid Path Name").blue()
+            index_path.to_string_lossy().blue()
         );
-        if let Ok(index_file) = fs::File::create(index_path){
-            let  _ = serde_json::to_writer(index_file, &term_freq_index)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()));
-        }    
+    }
+
+    match fs::File::create(&index_path) {
+        Ok(index_file) => {
+            if let Err(err) = serde_json::to_writer(index_file, &term_freq_index)
+                .map_err(|err| io::Error::other(err.to_string()))
+            {
+                eprintln!("{} {}", "Error writing search index:".red(), err);
+                return;
+            }
+        }
+        Err(err) => {
+            eprintln!("{} {}", "Error creating search index:".red(), err);
+            return;
+        }
+    }
+
+    if ai_mode {
+        print_ai_indexed_files(term_freq_index);
+        print_ai_ignored_paths(ignored_paths);
+        println!("done");
+    } else {
+        print_regular_ignored_paths(ignored_paths);
         println!(
             "{} {} {}",
             "Successfully indexed".green().bold(),
@@ -269,38 +398,56 @@ pub fn process_file(path: String, max_file_size: u64) {
     }
 }
 
+fn print_ai_indexed_files(term_freq_index: &TermFreqIndex) {
+    let mut paths = term_freq_index
+        .keys()
+        .map(|path| path.to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    paths.sort();
+
+    println!("indexed:{}", paths.len());
+    for path in paths {
+        println!("I:{path}");
+    }
+}
+
+fn print_ai_ignored_paths(ignored_paths: &[String]) {
+    println!("ignored:{}", ignored_paths.len());
+    for path in ignored_paths {
+        println!("G:{path}");
+    }
+}
+
+fn print_regular_ignored_paths(ignored_paths: &[String]) {
+    if ignored_paths.is_empty() {
+        return;
+    }
+
+    println!(
+        "{} {}",
+        "Ignored roots:".yellow().bold(),
+        ignored_paths.len().to_string().yellow()
+    );
+    for path in ignored_paths {
+        println!("  {}", path.bright_black());
+    }
+}
+
 fn calculate_term_frequency(
-    processing_reciever: channel::Receiver<(String, Vec<char>)>,
+    processing_receiver: &channel::Receiver<(String, Vec<char>)>,
 ) -> TermFreqIndex {
-    // Create a new empty index first
     let mut term_frequency_index = TermFreqIndex::new();
 
-    while let Ok((file_path, content)) = processing_reciever.recv() {
-        // Print the indexing status of a file.
-        println!(
-            "{} {file_path}",
-            "Indexing: ".green()
-        );
-
-        // Instantiate term frequency hashmap.
+    while let Ok((file_path, content)) = processing_receiver.recv() {
         let mut term_freq = TermFreq::new();
-        // Instantiate Lexer.
         let lexer = lexer::Lexer::new(&content);
 
-        // Iterate through the lexer.
-        for token in lexer {
-            let term = token;
-            // Check if the term already exists in the HashMap/Table.
-            if let Some(count) = term_freq.get_mut(&term) {
-                *count += 1; // Increment the frequency count of the word in the doc if it already exists.
-            } else {
-                // `move` the term into the hashmap/table because it gets dropped after this point regardless.
-                term_freq.insert(term, 1); // Start The Term Count Up with a 1
-            }
+        for term in lexer {
+            *term_freq.entry(term).or_insert(0) += 1;
         }
-        // Add a file and its term frequency to the term_frequeny_index table.
-        term_frequency_index.insert(PathBuf::from(file_path.clone()), term_freq);
+
+        term_frequency_index.insert(PathBuf::from(file_path), term_freq);
     }
-    // Return the hashmap
+
     term_frequency_index
 }
