@@ -1,120 +1,194 @@
 # Seroost
 
-A lightning-fast document search engine built in Rust that indexes and searches through your documents using TF-IDF scoring.
-**Note that credit goes to tsoding daily on YT for starting the project about 2 years ago. He created an XML search engine with a web interface and thought of extending it. I don't think he finished the project though, so i extended it from just xml and made it a CLI tool. Here's his yt channel: https://www.youtube.com/@TsodingDaily**
+Fast local document/code search in Rust. Seroost indexes supported files, stores a local search index, then ranks results with TF-IDF.
 
-## Latest Updates (v0.1.2)
-
-- 💻 **Code file parsing** with line number tracking for precise search results
-- 🔍 **Enhanced programming language support** (Rust, Python, JavaScript, TypeScript, Java, C/C++, Go, PHP, Ruby, Swift, Kotlin)
-- 📍 **Line-based search functionality** for accurate code location
-- ⚡ **Multi-threaded indexing** utilizing all available CPU cores
-- 📊 **Improved memory management** with file size limits
-- 🎨 **Enhanced CLI output** with color-coded status messages
-- 🔄 **Streaming file processing** for better performance
-- 🔍 **Extended file format support** (PDF, TXT, XML, HTML, and source code files)
+Credit: original idea comes from Tsoding Daily's XML search engine work. This project extends that idea into a multi-format CLI search tool.
 
 ## Features
 
-- 🚀 **Parallel processing** for faster document indexing
-- 💻 **Source code indexing** with line number support for precise search results
-- 🔍 **TF-IDF based search** with relevance scoring
-- 📁 **Recursive directory traversal**
-- ⚙️ **System-aware configuration storage**
-- 🛠️ **User-friendly CLI** with detailed feedback
-- 📝 **Multi-format support** including documents and source code
+- Parallel directory indexing with worker threads
+- TF-IDF ranked search
+- Regular, tree, and JSON search output
+- Compact `--ai` index output for agent/model context
+- Source-code indexing with line-number search metadata
+- Default ignore list for secrets, dependencies, build output, logs, dumps, media, binaries, IDE files
+- `.gitignore` support at indexed root
+- Saved config/index under system config directory
 
-## Supported File Formats
+## Supported Files
 
-- **Documents**: PDF, TXT, XML, HTML
-- **Source Code**: Rust (.rs), Python (.py), JavaScript (.js), TypeScript (.ts), Java (.java), C/C++ (.c, .cpp, .h), Go (.go), PHP (.php), Ruby (.rb), Swift (.swift), Kotlin (.kt)
+Documents:
 
-## Installation
+- PDF
+- TXT
+- XML / XHTML
+- HTML / HTM
 
-### Prerequisites
+Source code:
 
-- Rust and Cargo (1.70 or later)
-- Linux-based system (tested on Ubuntu/Debian)
+- Rust, Python, JavaScript, TypeScript
+- Java, C, C++, headers
+- Go, PHP, Ruby, Swift, Kotlin
 
-### Building from source
+## Install
 
 ```bash
 git clone https://github.com/parado-xy/seroost.git
 cd seroost
 cargo build --release
+```
 
-# Optional: Create a symlink to use from anywhere
+Optional global command:
+
+```bash
 sudo ln -s "$(pwd)/target/release/seroost" /usr/local/bin/
 ```
 
-## Usage
-
-### Indexing documents
+## CLI
 
 ```bash
-# Index with default settings
+seroost [OPTIONS] [COMMAND]
+```
+
+Commands:
+
+- `index`: index documents
+- `search <term>`: search indexed documents
+- `usage`: detailed examples
+
+Options:
+
+- `-i, --index-path <PATH>`: directory to index; saved for later searches
+- `-f, --file-size <MB>`: max file size; default `25`
+- `-m, --mode <regular|tree|code>`: search output mode; default `regular`
+- `-e, --ignore <PATTERNS>`: comma-separated extra ignore patterns
+- `--no-default-ignore`: disable built-in ignores
+- `-a, --ai`: compact index output
+
+## Index
+
+```bash
 seroost --index-path /path/to/documents index
-
-# Index with custom file size limit (in MB)
-seroost --index-path /path/to/documents --max-file-size 50 index
 ```
 
-### Searching documents
+With larger file limit:
 
 ```bash
-# Simple search
-seroost search "your query"
-
-# Display usage guide
-seroost usage
+seroost --index-path /path/to/documents --file-size 50 index
 ```
 
-## Implementation Details
+With extra ignores:
 
-- **Multi-threaded Architecture:**
+```bash
+seroost --index-path /repo --ignore "*.lock,tmp,fixtures" index
+```
 
-  - Separate threads for directory traversal
-  - Worker thread pool for file processing
-  - Dedicated thread for term frequency calculations
+AI-friendly index output:
 
-- **Memory Management:**
+```bash
+seroost --index-path /repo --ai index
+```
 
-  - Configurable file size limits
-  - Efficient string handling
-  - Streaming file processing
+Example:
 
-- **Search Algorithm:**
-  - TF-IDF scoring for relevance
-  - Document frequency optimization
-  - Top-K results ranking
+```text
+index:/home/me/.config/seroost/index.json
+indexed:2
+I:/repo/src/main.rs
+I:/repo/readme.md
+ignored:2
+G:/repo/node_modules
+G:/repo/target
+done
+```
+
+Normal index output lists ignored roots without spamming every nested ignored file:
+
+```text
+Saving index to: /home/me/.config/seroost/index.json
+Ignored roots: 2
+  /repo/node_modules
+  /repo/target
+Successfully indexed 12 documents
+```
+
+## Search
+
+Regular ranked output:
+
+```bash
+seroost search "query terms"
+```
+
+Tree output for project structure:
+
+```bash
+seroost --mode tree search "query terms"
+```
+
+Example:
+
+```text
+Search tree for: query terms
+└── /repo
+    └── src
+        ├── main.rs [#1 score=0.51234]
+        └── interact.rs [#2 score=0.33120]
+```
+
+JSON/code output:
+
+```bash
+seroost --mode code search "query terms"
+```
+
+Use `code` mode when another tool should parse results or when line matches matter.
+
+## Config
+
+Seroost uses the system config directory when available:
+
+- Config: `~/.config/seroost/config.json`
+- Index: `~/.config/seroost/index.json`
+
+Fallback paths:
+
+- `./indeces/config.json`
+- `./indeces/index.json`
+
+## Development
+
+Run from source:
+
+```bash
+cargo run -- --help
+cargo run -- --index-path ./docs index
+cargo run -- --mode tree search "example"
+```
+
+Quality checks:
+
+```bash
+cargo check --all-targets --all-features --locked
+cargo clippy --all-targets --all-features --locked -- -D warnings
+cargo test --all-targets --all-features --locked
+```
 
 ## Project Structure
 
-```
+```text
 seroost/
-├── src/
-│   ├── main.rs          # Entry point and CLI handling
-│   ├── lexer.rs         # Text tokenization
-│   ├── parsers.rs       # File format parsers
-│   ├── interact.rs      # Single-threaded implementation
-│   └── interactives.rs  # Multi-threaded implementation
-└── Cargo.toml
+├── build.rs
+├── Cargo.toml
+├── readme.md
+└── src/
+    ├── main.rs          # CLI/config flow
+    ├── lexer.rs         # tokenization
+    ├── parsers.rs       # PDF/TXT/XML/HTML/code readers
+    ├── interact.rs      # search/results output
+    └── interactives.rs  # threaded indexing
 ```
-
-## Contributing
-
-Contributions are welcome! Current focus areas:
-
-1. Memory optimization for large document collections
-2. Additional file format support
-3. Search result caching
-4. Query optimization
-5. Unit test coverage
 
 ## License
 
-MIT License
-
----
-
-_Built with Rust 🦀 - Optimized for Performance_
+MIT
