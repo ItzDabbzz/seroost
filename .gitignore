@@ -3,3 +3,13 @@
 /pdfs
 seroost
 performance-bottlenecks.md
+
+# Local configs and secrets
+.env
+.codex
+
+# IDE / editor
+.vscode/
+
+# AI agent config
+.kilo/
