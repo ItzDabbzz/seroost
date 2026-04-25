@@ -14,7 +14,7 @@ mod parsers;
 // Define CLI Interface.
 #[derive(Parser)]
 #[command(name = "seroost")]
-#[command(version = "1.0.0")]
+#[command(version = env!("APP_VERSION"))]
 #[command(about = "Searches the content of documents", long_about = None)]
 struct Cli {
     /// Pass an index path.
@@ -106,7 +106,7 @@ fn load_configuration(config_path: &Path) -> Result<HashMap<String, String>, par
     }
 
     let file = fs::File::open(config_path)?;
-    Ok(serde_json::from_reader(file).unwrap_or_else(|_| HashMap::new()))
+    serde_json::from_reader(file).map_err(Into::into)
 }
 
 fn resolve_index_path(
