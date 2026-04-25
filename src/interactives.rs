@@ -52,7 +52,6 @@ pub static DEFAULT_IGNORE_LIST: [&str; 122] = [
     "venv",
     ".venv",
     "env",
-    ".env",
     "envs",
     "virtualenvs",
     "venvs",
@@ -128,6 +127,7 @@ pub static DEFAULT_IGNORE_LIST: [&str; 122] = [
     ".vscode",
     ".DS_Store",
     "Thumbs.db",
+    "Dockerfile",
     "*.swp",
     "*.swo",
     ".commandkit",
@@ -170,6 +170,13 @@ fn simple_glob_match(pattern: &str, value: &str) -> bool {
         return true;
     }
 
+    // If pattern starts with * and value contains /, the * cannot match
+    // across directory boundaries, so return false.
+    // The caller (should_ignore_path) may match against the filename separately.
+    if pattern.starts_with('*') && value.contains('/') {
+        return false;
+    }
+
     let anchored_start = !pattern.starts_with('*');
     let anchored_end = !pattern.ends_with('*');
     let parts: Vec<&str> = pattern.split('*').filter(|part| !part.is_empty()).collect();
@@ -203,6 +210,8 @@ fn simple_glob_match(pattern: &str, value: &str) -> bool {
 
     true
 }
+
+
 
 pub fn traverse_dirs<P: AsRef<Path>>(
     dir_path: P,
@@ -325,9 +334,9 @@ fn read_supported_file(file_path: &str) -> Option<Vec<char>> {
         "pdf" => parsers::read_entire_pdf_file(file_path),
         "txt" => parsers::read_entire_txt_file(file_path),
         "xml" | "xhtml" => parsers::read_entire_xml_file(file_path),
-        "html" | "htm" => parsers::read_entire_html_file(file_path).map_err(Into::into),
+        "html" | "htm" => parsers::read_entire_html_file(file_path),
         "rs" | "py" | "js" | "ts" | "java" | "cpp" | "c" | "h" | "go" | "php" | "rb" | "swift"
-        | "kt" => parsers::read_code_file(file_path).map_err(Into::into),
+        | "kt" => parsers::read_code_file(file_path),
         _ => return None,
     };
 
@@ -450,4 +459,332 @@ fn calculate_term_frequency(
     }
 
     term_frequency_index
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_ignore_set(patterns: &[&str]) -> HashSet<String> {
+        patterns.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn test_exact_match() {
+        let ignore = make_ignore_set(&[".git", "node_modules"]);
+        let path = Path::new("repo/.git");
+        assert!(should_ignore_path(path, &ignore));
+    }
+
+    #[test]
+    fn test_file_name_match() {
+        let ignore = make_ignore_set(&["*.log"]);
+        let path = Path::new("repo/app.log");
+        assert!(should_ignore_path(path, &ignore));
+    }
+
+    #[test]
+    fn test_glob_no_match() {
+        let ignore = make_ignore_set(&["*.log"]);
+        let path = Path::new("repo/app.txt");
+        assert!(!should_ignore_path(path, &ignore));
+    }
+
+    #[test]
+    fn test_env_pattern() {
+        let ignore = make_ignore_set(&[".env", ".env.*"]);
+        let path = Path::new("repo/.env");
+        assert!(should_ignore_path(path, &ignore));
+        let path2 = Path::new("repo/.env.production");
+        assert!(should_ignore_path(path2, &ignore));
+    }
+
+    #[test]
+    fn test_no_match_empty_set() {
+        let ignore: HashSet<String> = HashSet::new();
+        let path = Path::new("repo/file.txt");
+        assert!(!should_ignore_path(path, &ignore));
+    }
+
+    #[test]
+    fn test_pattern_with_slash() {
+        let ignore = make_ignore_set(&["node_modules"]);
+        let path = Path::new("repo/node_modules");
+        assert!(should_ignore_path(path, &ignore));
+    }
+
+    #[test]
+    fn test_simple_glob_star() {
+        let ignore = make_ignore_set(&["*.tmp"]);
+        assert!(should_ignore_path(Path::new("data.tmp"), &ignore));
+        assert!(!should_ignore_path(Path::new("data.txt"), &ignore));
+    }
+
+    #[test]
+    fn test_normalized_path_match() {
+        let ignore = make_ignore_set(&["output"]);
+        let path = Path::new("project/build/output");
+        assert!(should_ignore_path(path, &ignore));
+    }
+
+    #[test]
+    fn test_trailing_slash_stripped() {
+        let ignore = make_ignore_set(&["logs/"]);
+        let path = Path::new("logs");
+        assert!(should_ignore_path(path, &ignore));
+    }
+
+    #[test]
+    fn test_glob_in_middle() {
+        let ignore = make_ignore_set(&["*test*"]);
+        assert!(should_ignore_path(Path::new("mytestfile"), &ignore));
+        assert!(should_ignore_path(Path::new("testfile"), &ignore));
+        assert!(should_ignore_path(Path::new("filetest"), &ignore));
+        assert!(!should_ignore_path(Path::new("file"), &ignore));
+    }
+
+    #[test]
+    fn test_media_extensions() {
+        let ignore = make_ignore_set(&["*.png", "*.jpg", "*.mp4"]);
+        assert!(should_ignore_path(Path::new("photo.png"), &ignore));
+        assert!(should_ignore_path(Path::new("video.mp4"), &ignore));
+        assert!(!should_ignore_path(Path::new("photo.jpg.bak"), &ignore));
+    }
+
+    #[test]
+    fn test_build_directories() {
+        let ignore = make_ignore_set(&["target", "__pycache__", ".next"]);
+        assert!(should_ignore_path(Path::new("project/target"), &ignore));
+        assert!(should_ignore_path(Path::new("project/__pycache__"), &ignore));
+        assert!(should_ignore_path(Path::new("project/.next"), &ignore));
+    }
+
+    // --- Direct simple_glob_match tests ---
+
+    #[test]
+    fn test_simple_glob_match_only_star() {
+        assert!(simple_glob_match("*", "anything"));
+    }
+
+    #[test]
+    fn test_simple_glob_match_empty_pattern() {
+        assert!(!simple_glob_match("", "file"));
+    }
+
+    #[test]
+    fn test_simple_glob_match_empty_value() {
+        assert!(!simple_glob_match("*.txt", ""));
+    }
+
+    #[test]
+    fn test_simple_glob_match_multiple_wildcards() {
+        assert!(simple_glob_match("a*b*c*", "aXbYcZ"));
+        assert!(!simple_glob_match("a*b*c*", "aXbYdZ"));
+    }
+
+    #[test]
+    fn test_simple_glob_match_anchored_start() {
+        assert!(simple_glob_match("src/*.rs", "src/main.rs"));
+        assert!(!simple_glob_match("src/*.rs", "lib/main.rs"));
+    }
+
+    #[test]
+    fn test_simple_glob_match_anchored_end() {
+        assert!(simple_glob_match("*.rs", "main.rs"));
+        assert!(!simple_glob_match("*.rs", "src/main.rs"));
+    }
+
+    #[test]
+    fn test_simple_glob_match_anchored_both() {
+        assert!(simple_glob_match("a*b", "axxb"));
+        assert!(!simple_glob_match("a*b", "axxc"));
+    }
+
+    #[test]
+    fn test_simple_glob_match_pattern_starts_with_star() {
+        assert!(simple_glob_match("*test", "mytest"));
+        assert!(!simple_glob_match("*test", "testmy"));
+    }
+
+    #[test]
+    fn test_simple_glob_match_pattern_ends_with_star() {
+        assert!(simple_glob_match("test*", "testmy"));
+        assert!(!simple_glob_match("test*", "mytest"));
+    }
+
+    #[test]
+    fn test_simple_glob_match_value_shorter() {
+        assert!(!simple_glob_match("verylong", "short"));
+    }
+
+    #[test]
+    fn test_simple_glob_match_pattern_with_question_mark() {
+        assert!(!simple_glob_match("file?.txt", "file1.txt"));
+    }
+
+    #[test]
+    fn test_simple_glob_match_pattern_with_brackets() {
+        assert!(!simple_glob_match("file[12].txt", "file1.txt"));
+    }
+
+    #[test]
+    fn test_simple_glob_match_pattern_with_slash() {
+        assert!(simple_glob_match("src/*", "src/lib/file.rs"));
+    }
+
+    // --- should_ignore_path edge cases ---
+
+    #[test]
+    fn test_should_ignore_path_hidden_file() {
+        let ignore = make_ignore_set(&["*.env.*"]);
+        assert!(should_ignore_path(Path::new(".env.local"), &ignore));
+        assert!(should_ignore_path(Path::new(".env.production"), &ignore));
+    }
+
+    #[test]
+    fn test_should_ignore_path_ssl_cert() {
+        let ignore = make_ignore_set(&["*.pem", "*.key", "*.crt"]);
+        assert!(should_ignore_path(Path::new("cert.pem"), &ignore));
+        assert!(should_ignore_path(Path::new("server.key"), &ignore));
+        assert!(should_ignore_path(Path::new("ca.crt"), &ignore));
+    }
+
+    #[test]
+    fn test_should_ignore_path_sqlite() {
+        let ignore = make_ignore_set(&["*.db", "*.sqlite", "*.db-shm", "*.db-wal"]);
+        assert!(should_ignore_path(Path::new("data.db"), &ignore));
+        assert!(should_ignore_path(Path::new("data.sqlite"), &ignore));
+    }
+
+    #[test]
+    fn test_should_ignore_path_database_files() {
+        let ignore = make_ignore_set(&["dump.rdb", "*.rdb", "*.aof"]);
+        assert!(should_ignore_path(Path::new("dump.rdb"), &ignore));
+    }
+
+    #[test]
+    fn test_should_ignore_path_env_variants() {
+        let ignore = make_ignore_set(&[".env.*"]);
+        assert!(should_ignore_path(Path::new(".env.local"), &ignore));
+    }
+
+    #[test]
+    fn test_should_ignore_path_hidden_file_dot_env() {
+        let ignore = make_ignore_set(&["*.env.*"]);
+        assert!(should_ignore_path(Path::new(".env.local"), &ignore));
+    }
+
+    #[test]
+    fn test_should_ignore_path_sqlite_files() {
+        let ignore = make_ignore_set(&["*.db", "*.sqlite", "*.db-shm", "*.db-wal"]);
+        assert!(should_ignore_path(Path::new("data.db"), &ignore));
+        assert!(should_ignore_path(Path::new("data.sqlite"), &ignore));
+    }
+
+    #[test]
+    fn test_should_ignore_path_unicode() {
+        let ignore = make_ignore_set(&["*.log"]);
+        assert!(should_ignore_path(Path::new("日志.log"), &ignore));
+    }
+
+    // --- collect_ignored_paths tests ---
+
+    #[test]
+    fn test_collect_ignored_paths_deduplication() {
+        let (sender, receiver) = crossbeam::channel::unbounded::<String>();
+        sender.send("path/to/file1".to_string()).unwrap();
+        sender.send("path/to/file1".to_string()).unwrap();
+        sender.send("path/to/file2".to_string()).unwrap();
+        let paths = collect_ignored_paths(&receiver);
+        assert_eq!(paths.len(), 2);
+    }
+
+    #[test]
+    fn test_collect_ignored_paths_sorted() {
+        let (sender, receiver) = crossbeam::channel::unbounded::<String>();
+        sender.send("path/to/z_file".to_string()).unwrap();
+        sender.send("path/to/a_file".to_string()).unwrap();
+        let paths = collect_ignored_paths(&receiver);
+        assert!(paths.is_sorted());
+    }
+
+    // --- DEFAULT_IGNORE_LIST validation ---
+
+    #[test]
+    fn test_default_ignore_list_no_duplicates() {
+        let mut seen = HashSet::new();
+        for &pattern in &DEFAULT_IGNORE_LIST {
+            assert!(seen.insert(pattern.to_string()), "Duplicate pattern: {}", pattern);
+        }
+    }
+
+    #[test]
+    fn test_default_ignore_list_no_empty_strings() {
+        for &pattern in &DEFAULT_IGNORE_LIST {
+            assert!(!pattern.is_empty(), "Empty pattern found");
+        }
+    }
+
+    #[test]
+    fn test_default_ignore_list_count() {
+        assert_eq!(DEFAULT_IGNORE_LIST.len(), 122);
+    }
+
+    #[test]
+    fn test_default_ignore_list_has_secrets() {
+        let ignore = make_ignore_set(&DEFAULT_IGNORE_LIST);
+        assert!(should_ignore_path(Path::new("id_rsa"), &ignore));
+        assert!(should_ignore_path(Path::new("secret"), &ignore));
+        assert!(should_ignore_path(Path::new("credentials"), &ignore));
+    }
+
+    #[test]
+    fn test_default_ignore_list_has_build_output() {
+        let ignore = make_ignore_set(&DEFAULT_IGNORE_LIST);
+        assert!(should_ignore_path(Path::new("target"), &ignore));
+        assert!(should_ignore_path(Path::new("build"), &ignore));
+        assert!(should_ignore_path(Path::new("dist"), &ignore));
+    }
+
+    #[test]
+    fn test_default_ignore_list_has_media() {
+        let ignore = make_ignore_set(&DEFAULT_IGNORE_LIST);
+        assert!(should_ignore_path(Path::new("photo.png"), &ignore));
+        assert!(should_ignore_path(Path::new("video.mp4"), &ignore));
+        assert!(should_ignore_path(Path::new("song.mp3"), &ignore));
+    }
+
+    #[test]
+    fn test_default_ignore_list_has_binaries() {
+        let ignore = make_ignore_set(&DEFAULT_IGNORE_LIST);
+        assert!(should_ignore_path(Path::new("app.exe"), &ignore));
+        assert!(should_ignore_path(Path::new("lib.so"), &ignore));
+        assert!(should_ignore_path(Path::new("app.bin"), &ignore));
+    }
+
+    #[test]
+    fn test_default_ignore_list_has_ide_files() {
+        let ignore = make_ignore_set(&DEFAULT_IGNORE_LIST);
+        assert!(should_ignore_path(Path::new(".idea"), &ignore));
+        assert!(should_ignore_path(Path::new(".vscode"), &ignore));
+    }
+
+    #[test]
+    fn test_default_ignore_list_has_venv() {
+        let ignore = make_ignore_set(&DEFAULT_IGNORE_LIST);
+        assert!(should_ignore_path(Path::new("venv"), &ignore));
+        assert!(should_ignore_path(Path::new(".venv"), &ignore));
+    }
+
+    #[test]
+    fn test_default_ignore_list_has_node_modules() {
+        let ignore = make_ignore_set(&DEFAULT_IGNORE_LIST);
+        assert!(should_ignore_path(Path::new("node_modules"), &ignore));
+    }
+
+    #[test]
+    fn test_default_ignore_list_has_docker_files() {
+        let ignore = make_ignore_set(&DEFAULT_IGNORE_LIST);
+        assert!(should_ignore_path(Path::new("Dockerfile"), &ignore));
+    }
 }
