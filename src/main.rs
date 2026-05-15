@@ -46,6 +46,11 @@ struct Cli {
     #[arg(short, long)]
     ai: bool,
 
+    /// Pass a comma-separated list of extra file extensions to treat as code files.
+    /// Merges with the built-in default set. Example: "jsx,tsx,vue"
+    #[arg(short = 'x', long, value_delimiter = ',')]
+    code_ext: Option<Vec<String>>,
+
     #[command(subcommand)]
     command: Option<AppCommands>,
 }
@@ -81,12 +86,15 @@ fn main() -> Result<(), parsers::GlobalError> {
     let max_file_size = effective_file_size(&cli, &configuration) * 1024u64 * 1024u64;
     let output_mode = output_mode(&cli)?;
     let ignore_set = build_ignore_set(&cli, &configuration);
+    let code_ext_set = build_code_ext_set(&cli, &configuration);
 
     match &cli.command {
         Some(AppCommands::Index) => {
             index_documents(&index_path, max_file_size, &ignore_set, cli.ai);
         }
-        Some(AppCommands::Search { term }) => interact::search_documents(term, output_mode)?,
+        Some(AppCommands::Search { term }) => {
+            interact::search_documents(term, output_mode, &code_ext_set)?;
+        }
         Some(AppCommands::Usage) => interact::display_usage(),
         None => {
             println!(
@@ -148,6 +156,9 @@ fn save_configuration(
     if let Some(cli_ignore) = &cli.ignore {
         configuration.insert("ignore".to_string(), cli_ignore.join(","));
     }
+    if let Some(code_ext) = &cli.code_ext {
+        configuration.insert("code_ext".to_string(), code_ext.join(","));
+    }
     configuration.insert("file_size".to_string(), cli.file_size.to_string());
     configuration.insert(
         "no_default_ignore".to_string(),
@@ -208,6 +219,27 @@ fn build_ignore_set(cli: &Cli, configuration: &HashMap<String, String>) -> HashS
     }
 
     ignore_set
+}
+
+fn build_code_ext_set(
+    cli: &Cli,
+    configuration: &HashMap<String, String>,
+) -> HashSet<String> {
+    let mut set = HashSet::new();
+
+    if let Some(s) = configuration.get("code_ext") {
+        for item in s.split(',').map(str::trim).filter(|i| !i.is_empty()) {
+            set.insert(item.to_ascii_lowercase());
+        }
+    }
+
+    if let Some(cli_ext) = &cli.code_ext {
+        for item in cli_ext {
+            set.insert(item.to_ascii_lowercase());
+        }
+    }
+
+    set
 }
 
 fn index_documents(

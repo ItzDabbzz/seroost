@@ -13,3 +13,9 @@ performance-bottlenecks.md
 
 # AI agent config
 .kilo/
+
+# Release artifacts
+/dist
+/releases
+*.zip
+*.tar.gz

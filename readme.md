@@ -11,6 +11,7 @@ Credit: original idea comes from Tsoding Daily's XML search engine work. This pr
 - Regular, tree, and JSON search output
 - Compact `--ai` index output for agent/model context
 - Source-code indexing with line-number search metadata
+- Configurable code file extensions (`--code-ext`)
 - Default ignore list for secrets, dependencies, build output, logs, dumps, media, binaries, IDE files
 - `.gitignore` support at indexed root
 - Saved config/index under system config directory
@@ -26,9 +27,12 @@ Documents:
 
 Source code:
 
-- Rust, Python, JavaScript, TypeScript
-- Java, C, C++, headers
-- Go, PHP, Ruby, Swift, Kotlin
+- Rust, Python, JavaScript, TypeScript, JSX, TSX
+- Java, C, C++, C#, Go, PHP, Ruby, Swift, Kotlin
+- Zig, Nim, Dart, Julia, Crystal, OCaml, F#, Raku
+- Shell (Bash, Zsh, Fish, PowerShell), Batch
+- Config (TOML, YAML, JSON, INI, Gradle, CMake, Terraform)
+- And more — extendable via `--code-ext`
 
 ## Install
 
@@ -38,10 +42,16 @@ cd seroost
 cargo build --release
 ```
 
-Optional global command:
+Optional global command (Linux/macOS):
 
 ```bash
 sudo ln -s "$(pwd)/target/release/seroost" /usr/local/bin/
+```
+
+Windows release build:
+
+```powershell
+.\scripts\release.ps1
 ```
 
 ## CLI
@@ -64,6 +74,7 @@ Options:
 - `-e, --ignore <PATTERNS>`: comma-separated extra ignore patterns
 - `--no-default-ignore`: disable built-in ignores
 - `-a, --ai`: compact index output
+- `-x, --code-ext <EXTS>`: extra file extensions to treat as code (e.g. `nix,tf`)
 
 ## Index
 
@@ -174,6 +185,16 @@ cargo clippy --all-targets --all-features --locked -- -D warnings
 cargo test --all-targets --all-features --locked
 ```
 
+Release build:
+
+```bash
+# Linux/macOS
+./scripts/release.sh
+
+# Windows
+.\scripts\release.ps1
+```
+
 ## Project Structure
 
 ```text
@@ -181,6 +202,10 @@ seroost/
 ├── build.rs
 ├── Cargo.toml
 ├── readme.md
+├── CHANGELOG.md
+├── scripts/
+│   ├── release.sh      # Linux/macOS release packaging
+│   └── release.ps1     # Windows release packaging
 └── src/
     ├── main.rs          # CLI/config flow
     ├── lexer.rs         # tokenization

@@ -1,6 +1,6 @@
 use crate::parsers;
 use colored::Colorize;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io;
 
@@ -136,7 +136,7 @@ fn display_installation_usage() {
     println!("{}", "INSTALLATION".yellow().bold());
     println!("Clone and build the repository:");
     println!(
-        "  {} git clone https://github.com/parado-xy/seroost.git",
+        "  {} git clone https://github.com/ItzDabbzz/seroost.git",
         "$".bright_black()
     );
     println!("  {} cd seroost", "$".bright_black());
@@ -150,7 +150,11 @@ fn display_installation_usage() {
     println!();
 }
 
-pub fn search_documents(query: &str, output_mode: Mode) -> Result<(), parsers::GlobalError> {
+pub fn search_documents(
+    query: &str,
+    output_mode: Mode,
+    extra_code_exts: &HashSet<String>,
+) -> Result<(), parsers::GlobalError> {
     let index_path = get_indeces_path();
     if !Path::new(&index_path).exists() {
         print_missing_index_error(output_mode);
@@ -176,7 +180,7 @@ pub fn search_documents(query: &str, output_mode: Mode) -> Result<(), parsers::G
     match output_mode {
         Mode::Regular => display_regular_results(query, &ranked_docs),
         Mode::Tree => display_tree_results(query, &ranked_docs),
-        Mode::Code => display_code_results(query, &ranked_docs)?,
+        Mode::Code => display_code_results(query, &ranked_docs, extra_code_exts)?,
     }
 
     Ok(())
@@ -304,13 +308,14 @@ fn display_tree_results(query: &str, ranked_docs: &[(PathBuf, f64)]) {
 fn display_code_results(
     query: &str,
     ranked_docs: &[(PathBuf, f64)],
+    extra_code_exts: &HashSet<String>,
 ) -> Result<(), parsers::GlobalError> {
     let results = ranked_docs
         .iter()
         .take(10)
         .enumerate()
         .map(|(index, (path, score))| {
-            let line_matches = if is_code_file(path) {
+            let line_matches = if is_code_file(path, extra_code_exts) {
                 parsers::get_code_line_info(path, query).unwrap_or_default()
             } else {
                 Vec::new()
@@ -430,26 +435,39 @@ struct SearchResultMeta {
     score: f64,
 }
 
-fn is_code_file(path: &Path) -> bool {
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| {
-            matches!(
-                extension.to_ascii_lowercase().as_str(),
-                "rs" | "py"
-                    | "js"
-                    | "ts"
-                    | "java"
-                    | "cpp"
-                    | "c"
-                    | "h"
-                    | "go"
-                    | "php"
-                    | "rb"
-                    | "swift"
-                    | "kt"
-            )
-        })
+fn is_code_file(path: &Path, extra_exts: &HashSet<String>) -> bool {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase());
+
+    let Some(ext) = ext else {
+        return false;
+    };
+
+    if extra_exts.contains(&ext) {
+        return true;
+    }
+
+    matches!(
+        ext.as_str(),
+        "rs" | "py" | "js" | "ts" | "jsx" | "tsx" | "mjs" | "cjs"
+            | "java" | "cpp" | "cc" | "cxx" | "c" | "h" | "hpp" | "hh"
+            | "go" | "php" | "rb" | "swift" | "kt" | "kts"
+            | "cs" | "scala" | "sc" | "ex" | "exs" | "lua"
+            | "erl" | "hrl" | "elm" | "hs" | "lhs" | "clj" | "cljs"
+            | "groovy" | "gvy" | "vue" | "svelte" | "r" | "rmd"
+            | "pl" | "pm" | "sh" | "bash" | "zsh" | "fish"
+            | "ps1" | "bat" | "cmd" | "awk" | "sed" | "make"
+            | "cmake" | "dockerfile" | "tf" | "sql" | "graphql"
+            | "gql" | "proto" | "toml" | "yaml" | "yml" | "json"
+            | "jsonc" | "ini" | "cfg" | "conf" | "properties"
+            | "gradle" | "nix" | "v" | "zig" | "nim" | "d"
+            | "dart" | "ml" | "mli" | "fs" | "fsx" | "fsi"
+            | "vbs" | "asm" | "s" | "pas" | "pp" | "lpr"
+            | "cr" | "coffee" | "litcoffee" | "jl" | "raku"
+            | "rakumod" | "rakutest" | "p6" | "pm6"
+    )
 }
 
 /// Returns the configuration path based on the system used.
@@ -552,29 +570,39 @@ mod tests {
 
     #[test]
     fn test_is_code_file() {
-        assert!(is_code_file(Path::new("file.rs")));
-        assert!(is_code_file(Path::new("file.py")));
-        assert!(is_code_file(Path::new("file.js")));
-        assert!(is_code_file(Path::new("file.ts")));
-        assert!(is_code_file(Path::new("file.java")));
-        assert!(is_code_file(Path::new("file.cpp")));
-        assert!(is_code_file(Path::new("file.c")));
-        assert!(is_code_file(Path::new("file.h")));
-        assert!(is_code_file(Path::new("file.go")));
-        assert!(is_code_file(Path::new("file.php")));
-        assert!(is_code_file(Path::new("file.rb")));
-        assert!(is_code_file(Path::new("file.swift")));
-        assert!(is_code_file(Path::new("file.kt")));
-        assert!(!is_code_file(Path::new("file.txt")));
-        assert!(!is_code_file(Path::new("file.md")));
-        assert!(!is_code_file(Path::new("file")));
+        let empty = HashSet::new();
+        assert!(is_code_file(Path::new("file.rs"), &empty));
+        assert!(is_code_file(Path::new("file.py"), &empty));
+        assert!(is_code_file(Path::new("file.js"), &empty));
+        assert!(is_code_file(Path::new("file.ts"), &empty));
+        assert!(is_code_file(Path::new("file.java"), &empty));
+        assert!(is_code_file(Path::new("file.cpp"), &empty));
+        assert!(is_code_file(Path::new("file.c"), &empty));
+        assert!(is_code_file(Path::new("file.h"), &empty));
+        assert!(is_code_file(Path::new("file.go"), &empty));
+        assert!(is_code_file(Path::new("file.php"), &empty));
+        assert!(is_code_file(Path::new("file.rb"), &empty));
+        assert!(is_code_file(Path::new("file.swift"), &empty));
+        assert!(is_code_file(Path::new("file.kt"), &empty));
+        assert!(!is_code_file(Path::new("file.txt"), &empty));
+        assert!(!is_code_file(Path::new("file.md"), &empty));
+        assert!(!is_code_file(Path::new("file"), &empty));
     }
 
     #[test]
     fn test_is_code_file_case_insensitive() {
-        assert!(is_code_file(Path::new("file.RS")));
-        assert!(is_code_file(Path::new("file.PY")));
-        assert!(is_code_file(Path::new("file.Js")));
+        let empty = HashSet::new();
+        assert!(is_code_file(Path::new("file.RS"), &empty));
+        assert!(is_code_file(Path::new("file.PY"), &empty));
+        assert!(is_code_file(Path::new("file.Js"), &empty));
+    }
+
+    #[test]
+    fn test_is_code_file_extra_exts() {
+        let mut extra = HashSet::new();
+        extra.insert("custom".to_string());
+        assert!(is_code_file(Path::new("file.custom"), &extra));
+        assert!(!is_code_file(Path::new("file.txt"), &extra));
     }
 
     #[test]
@@ -748,33 +776,37 @@ mod tests {
 
     #[test]
     fn test_is_code_file_missing_extensions() {
-        assert!(!is_code_file(Path::new("file.jsx")));
-        assert!(!is_code_file(Path::new("file.tsx")));
-        assert!(!is_code_file(Path::new("file.vue")));
-        assert!(!is_code_file(Path::new("file.cs")));
-        assert!(!is_code_file(Path::new("file.scala")));
-        assert!(!is_code_file(Path::new("file.ex")));
-        assert!(!is_code_file(Path::new("file.lua")));
-        assert!(!is_code_file(Path::new("file.r")));
+        let empty = HashSet::new();
+        assert!(is_code_file(Path::new("file.jsx"), &empty));
+        assert!(is_code_file(Path::new("file.tsx"), &empty));
+        assert!(is_code_file(Path::new("file.vue"), &empty));
+        assert!(is_code_file(Path::new("file.cs"), &empty));
+        assert!(is_code_file(Path::new("file.scala"), &empty));
+        assert!(is_code_file(Path::new("file.ex"), &empty));
+        assert!(is_code_file(Path::new("file.lua"), &empty));
+        assert!(is_code_file(Path::new("file.r"), &empty));
     }
 
     #[test]
     fn test_is_code_file_dotfile() {
-        assert!(!is_code_file(Path::new(".gitignore")));
-        assert!(!is_code_file(Path::new(".env")));
-        assert!(!is_code_file(Path::new(".DS_Store")));
+        let empty = HashSet::new();
+        assert!(!is_code_file(Path::new(".gitignore"), &empty));
+        assert!(!is_code_file(Path::new(".env"), &empty));
+        assert!(!is_code_file(Path::new(".DS_Store"), &empty));
     }
 
     #[test]
     fn test_is_code_file_dotfile_with_ext() {
-        assert!(is_code_file(Path::new(".config.rs")));
-        assert!(is_code_file(Path::new(".settings.py")));
+        let empty = HashSet::new();
+        assert!(is_code_file(Path::new(".config.rs"), &empty));
+        assert!(is_code_file(Path::new(".settings.py"), &empty));
     }
 
     #[test]
     fn test_is_code_file_double_extension() {
-        assert!(!is_code_file(Path::new("archive.tar.gz")));
-        assert!(!is_code_file(Path::new("backup.tar.zst")));
+        let empty = HashSet::new();
+        assert!(!is_code_file(Path::new("archive.tar.gz"), &empty));
+        assert!(!is_code_file(Path::new("backup.tar.zst"), &empty));
     }
 
     // --- build_search_tree additional tests ---
@@ -864,13 +896,15 @@ mod tests {
 
     #[test]
     fn test_search_documents_no_index() {
-        let result = search_documents("test", Mode::Regular);
+        let empty = HashSet::new();
+        let result = search_documents("test", Mode::Regular, &empty);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_search_documents_empty_query() {
-        let result = search_documents("", Mode::Regular);
+        let empty = HashSet::new();
+        let result = search_documents("", Mode::Regular, &empty);
         assert!(result.is_ok());
     }
 
@@ -900,8 +934,9 @@ mod tests {
 
     #[test]
     fn test_display_code_results_non_code_file() {
+        let empty = HashSet::new();
         let docs = [(PathBuf::from("/path/file.txt"), 0.5)];
-        let result = display_code_results("test", &docs);
+        let result = display_code_results("test", &docs, &empty);
         assert!(result.is_ok());
     }
 
