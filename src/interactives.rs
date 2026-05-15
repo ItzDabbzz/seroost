@@ -211,8 +211,6 @@ fn simple_glob_match(pattern: &str, value: &str) -> bool {
     true
 }
 
-
-
 pub fn traverse_dirs<P: AsRef<Path>>(
     dir_path: P,
     sender: &channel::Sender<String>,
@@ -555,7 +553,10 @@ mod tests {
     fn test_build_directories() {
         let ignore = make_ignore_set(&["target", "__pycache__", ".next"]);
         assert!(should_ignore_path(Path::new("project/target"), &ignore));
-        assert!(should_ignore_path(Path::new("project/__pycache__"), &ignore));
+        assert!(should_ignore_path(
+            Path::new("project/__pycache__"),
+            &ignore
+        ));
         assert!(should_ignore_path(Path::new("project/.next"), &ignore));
     }
 
@@ -714,7 +715,11 @@ mod tests {
     fn test_default_ignore_list_no_duplicates() {
         let mut seen = HashSet::new();
         for &pattern in &DEFAULT_IGNORE_LIST {
-            assert!(seen.insert(pattern.to_string()), "Duplicate pattern: {}", pattern);
+            assert!(
+                seen.insert(pattern.to_string()),
+                "Duplicate pattern: {}",
+                pattern
+            );
         }
     }
 

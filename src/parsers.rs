@@ -68,7 +68,7 @@ pub fn read_entire_html_file<P: AsRef<Path>>(path: P) -> Result<String, GlobalEr
 
 fn extract_text_without_scripts(node: &select::node::Node) -> String {
     let mut text = String::new();
-for child in node.children() {
+    for child in node.children() {
         if child.name() == Some("script") || child.name() == Some("style") {
             continue;
         }
@@ -348,7 +348,8 @@ mod tests {
 
     #[test]
     fn test_read_html_scripts_excluded() {
-        let html = r#"<html><body><script>var x=1; var y=2;</script><p>visible text</p></body></html>"#;
+        let html =
+            r#"<html><body><script>var x=1; var y=2;</script><p>visible text</p></body></html>"#;
         let path = temp_file("test_script.html", html);
         let result = read_entire_html_file(&path).unwrap();
         assert!(result.to_lowercase().contains("visible text"));

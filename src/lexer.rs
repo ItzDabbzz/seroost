@@ -152,14 +152,14 @@ mod tests {
 
     #[test]
     fn test_long_sentence() {
-        let content: Vec<char> = "The quick brown fox jumps over the lazy dog".chars().collect();
+        let content: Vec<char> = "The quick brown fox jumps over the lazy dog"
+            .chars()
+            .collect();
         let lexer = Lexer::new(&content);
         let tokens: Vec<String> = lexer.collect();
         assert_eq!(
             tokens,
-            vec![
-                "the", "quick", "brown", "fox", "jumps", "over", "the", "lazy", "dog"
-            ]
+            vec!["the", "quick", "brown", "fox", "jumps", "over", "the", "lazy", "dog"]
         );
     }
 
@@ -312,7 +312,10 @@ mod tests {
         let content: Vec<char> = "Hello, world. How are you?".chars().collect();
         let lexer = Lexer::new(&content);
         let tokens: Vec<String> = lexer.collect();
-        assert_eq!(tokens, vec!["hello", ",", "world", ".", "how", "are", "you", "?"]);
+        assert_eq!(
+            tokens,
+            vec!["hello", ",", "world", ".", "how", "are", "you", "?"]
+        );
     }
 
     #[test]

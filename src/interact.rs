@@ -31,12 +31,30 @@ pub fn display_usage() {
 
     // CLI Options section
     println!("{}", "CLI OPTIONS".yellow().bold());
-    println!("  {}", "-i, --index-path <PATH> : directory to index; saved for later searches".bright_black());
-    println!("  {}", "-f, --file-size <MB> : max file size; default 25".bright_black());
-    println!("  {}", "-m, --mode <regular|tree|code> : search output mode; default regular".bright_black());
-    println!("  {}", "-e, --ignore <PATTERNS> : comma-separated extra ignore patterns".bright_black());
-    println!("  {}", "--no-default-ignore : disable built-in ignores".bright_black());
-    println!("  {}", "-a, --ai : compact index output for AI consumption".bright_black());
+    println!(
+        "  {}",
+        "-i, --index-path <PATH> : directory to index; saved for later searches".bright_black()
+    );
+    println!(
+        "  {}",
+        "-f, --file-size <MB> : max file size; default 25".bright_black()
+    );
+    println!(
+        "  {}",
+        "-m, --mode <regular|tree|code> : search output mode; default regular".bright_black()
+    );
+    println!(
+        "  {}",
+        "-e, --ignore <PATTERNS> : comma-separated extra ignore patterns".bright_black()
+    );
+    println!(
+        "  {}",
+        "--no-default-ignore : disable built-in ignores".bright_black()
+    );
+    println!(
+        "  {}",
+        "-a, --ai : compact index output for AI consumption".bright_black()
+    );
     println!();
     // Sample documents section
     println!("{}", "CREATING SAMPLE DOCUMENTS".yellow().bold());
@@ -451,22 +469,101 @@ fn is_code_file(path: &Path, extra_exts: &HashSet<String>) -> bool {
 
     matches!(
         ext.as_str(),
-        "rs" | "py" | "js" | "ts" | "jsx" | "tsx" | "mjs" | "cjs"
-            | "java" | "cpp" | "cc" | "cxx" | "c" | "h" | "hpp" | "hh"
-            | "go" | "php" | "rb" | "swift" | "kt" | "kts"
-            | "cs" | "scala" | "sc" | "ex" | "exs" | "lua"
-            | "erl" | "hrl" | "elm" | "hs" | "lhs" | "clj" | "cljs"
-            | "groovy" | "gvy" | "vue" | "svelte" | "r" | "rmd"
-            | "pl" | "pm" | "sh" | "bash" | "zsh" | "fish"
-            | "ps1" | "bat" | "cmd" | "awk" | "sed" | "make"
-            | "cmake" | "dockerfile" | "tf" | "sql" | "graphql"
-            | "gql" | "proto" | "toml" | "yaml" | "yml" | "json"
-            | "jsonc" | "ini" | "cfg" | "conf" | "properties"
-            | "gradle" | "nix" | "v" | "zig" | "nim" | "d"
-            | "dart" | "ml" | "mli" | "fs" | "fsx" | "fsi"
-            | "vbs" | "asm" | "s" | "pas" | "pp" | "lpr"
-            | "cr" | "coffee" | "litcoffee" | "jl" | "raku"
-            | "rakumod" | "rakutest" | "p6" | "pm6"
+        "rs" | "py"
+            | "js"
+            | "ts"
+            | "jsx"
+            | "tsx"
+            | "mjs"
+            | "cjs"
+            | "java"
+            | "cpp"
+            | "cc"
+            | "cxx"
+            | "c"
+            | "h"
+            | "hpp"
+            | "hh"
+            | "go"
+            | "php"
+            | "rb"
+            | "swift"
+            | "kt"
+            | "kts"
+            | "cs"
+            | "scala"
+            | "sc"
+            | "ex"
+            | "exs"
+            | "lua"
+            | "erl"
+            | "hrl"
+            | "elm"
+            | "hs"
+            | "lhs"
+            | "clj"
+            | "cljs"
+            | "groovy"
+            | "gvy"
+            | "vue"
+            | "svelte"
+            | "r"
+            | "rmd"
+            | "pl"
+            | "pm"
+            | "sh"
+            | "bash"
+            | "zsh"
+            | "fish"
+            | "ps1"
+            | "bat"
+            | "cmd"
+            | "awk"
+            | "sed"
+            | "make"
+            | "cmake"
+            | "dockerfile"
+            | "tf"
+            | "sql"
+            | "graphql"
+            | "gql"
+            | "proto"
+            | "toml"
+            | "yaml"
+            | "yml"
+            | "json"
+            | "jsonc"
+            | "ini"
+            | "cfg"
+            | "conf"
+            | "properties"
+            | "gradle"
+            | "nix"
+            | "v"
+            | "zig"
+            | "nim"
+            | "d"
+            | "dart"
+            | "ml"
+            | "mli"
+            | "fs"
+            | "fsx"
+            | "fsi"
+            | "vbs"
+            | "asm"
+            | "s"
+            | "pas"
+            | "pp"
+            | "lpr"
+            | "cr"
+            | "coffee"
+            | "litcoffee"
+            | "jl"
+            | "raku"
+            | "rakumod"
+            | "rakutest"
+            | "p6"
+            | "pm6"
     )
 }
 
@@ -508,7 +605,10 @@ mod tests {
 
     #[test]
     fn test_rank_single_match() {
-        let terms: [&[&str]; 2] = [&["rust", "programming", "language"], &["python", "language"]];
+        let terms: [&[&str]; 2] = [
+            &["rust", "programming", "language"],
+            &["python", "language"],
+        ];
         let term_slices: Vec<&[&str]> = terms.iter().map(|t| t.as_ref()).collect();
         let index = make_index(&["doc1.txt", "doc2.txt"], &term_slices);
         let query = ["rust".to_string()];
@@ -722,7 +822,13 @@ mod tests {
     fn test_rank_paths_with_special_chars() {
         let terms: [Vec<&str>; 2] = [vec!["rust"], vec!["python"]];
         let term_slices: Vec<&[&str]> = terms.iter().map(|t| t.as_ref()).collect();
-        let index = make_index(&["path-with-dashes/file.txt", "path_with_underscores/file.txt"], &term_slices);
+        let index = make_index(
+            &[
+                "path-with-dashes/file.txt",
+                "path_with_underscores/file.txt",
+            ],
+            &term_slices,
+        );
         let query = ["rust".to_string()];
         let result = rank_documents(&index, &query).unwrap();
         assert_eq!(result.len(), 1);
@@ -748,7 +854,10 @@ mod tests {
             all_terms.push(vec!["common".to_string(), format!("term_{}", i)]);
         }
         let paths_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
-        let terms_refs: Vec<Vec<&str>> = all_terms.iter().map(|t| t.iter().map(|s| s.as_str()).collect()).collect();
+        let terms_refs: Vec<Vec<&str>> = all_terms
+            .iter()
+            .map(|t| t.iter().map(|s| s.as_str()).collect())
+            .collect();
         let term_slices: Vec<&[&str]> = terms_refs.iter().map(|t| t.as_ref()).collect();
         let index = make_index(&paths_refs, &term_slices);
         let query = ["common".to_string()];
@@ -839,7 +948,10 @@ mod tests {
     fn test_build_search_tree_truncation_at_ten() {
         let mut docs = Vec::new();
         for i in 0..15 {
-            docs.push((PathBuf::from(format!("file_{}.txt", i)), (15.0 - i as f64) * 0.1));
+            docs.push((
+                PathBuf::from(format!("file_{}.txt", i)),
+                (15.0 - i as f64) * 0.1,
+            ));
         }
         let _tree = build_search_tree(&docs);
     }
@@ -873,7 +985,10 @@ mod tests {
     fn test_display_regular_results_max_ten() {
         let mut docs = Vec::new();
         for i in 0..15 {
-            docs.push((PathBuf::from(format!("doc_{}.txt", i)), (15.0 - i as f64) * 0.1));
+            docs.push((
+                PathBuf::from(format!("doc_{}.txt", i)),
+                (15.0 - i as f64) * 0.1,
+            ));
         }
         display_regular_results("test", &docs);
     }

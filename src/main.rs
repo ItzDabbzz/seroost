@@ -221,10 +221,7 @@ fn build_ignore_set(cli: &Cli, configuration: &HashMap<String, String>) -> HashS
     ignore_set
 }
 
-fn build_code_ext_set(
-    cli: &Cli,
-    configuration: &HashMap<String, String>,
-) -> HashSet<String> {
+fn build_code_ext_set(cli: &Cli, configuration: &HashMap<String, String>) -> HashSet<String> {
     let mut set = HashSet::new();
 
     if let Some(s) = configuration.get("code_ext") {
